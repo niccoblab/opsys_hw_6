@@ -32,7 +32,7 @@ struct Inode //128 pointers to diskmap blocks, should be 512 bytes
 struct Datablock // should also be 512 bytes, contains files
 {
 	char *filename //should be 32 bytes in total
-	int isFree;
+	char isFree;
 };
 
 struct FreeBlockPointer // should be around 256 bytes, so two can fit in one block. 
