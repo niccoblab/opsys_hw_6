@@ -3,6 +3,9 @@
 #include <math.h>
 #include <time.h>
 #include <stdin.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
 
 //every global in bytes
 int BLOCK_SIZE = 512;
@@ -14,21 +17,22 @@ int MAX_FILE_SIZE = pow(2, 16); // 2^16 bytes
 
 int MAX_NUM_OF_FILES = 512;
 int MAX_NUM_BLOCKS = 16384;
-
+int attached = 0; //later, check if file system file is created already
+uint32_t MAGIC_NUMBER = 0xT3T0;
 #define BVFS_RDONLY 0;
 #define BVFS_WRCONCAT 1; 
 #define BVFS_WRTRUNC 2;
 
-struct Superblock //should be, like, 16 bytes and contain the location of the first free block list head
+typedef struct Superblock //should be, like, 16 bytes and contain the location of the first free block list head
 {
 	int totalBlocks = MAX_NUM_BLOCKS; //total num of blocks that will be going into the file system
 	uint16_t firstInode;		  //pointer to first Inode
 	uint16_t freeListHead;		  //pointer to first Free Block Pointer
 	int size = BLOCK_SIZE;		  //size of superblock, same as every other block. 
-	uint32_t magicNum = 0xT3T0	  //for future testing, could return whether the file has been created or not. 
+	uint32_t magicNum;	  //for future testing, could return whether the file has been created or not. 
 };
 
-struct Inode //128 pointers to diskmap blocks, should be 512 bytes Addendum: ONE INODE PER FILE - will end up with a total of 512 inodes. 
+typedef struct Inode //128 pointers to diskmap blocks, should be 512 bytes Addendum: ONE INODE PER FILE - will end up with a total of 512 inodes. 
 {
 	uint16_t diskmap[128];  	//If need to go over multiple blocks, this diskmap is to keep the file intact. 
 	char fileName[FILENAME_SIZE]; 	//should be stored here, not in data block
@@ -37,16 +41,27 @@ struct Inode //128 pointers to diskmap blocks, should be 512 bytes Addendum: ONE
 	char isFree = 0;		//if the inode contains a file or not. 0 is false.
 };
 
-struct Datablock // should also be 512 bytes, contains file data, not files.
+typedef struct Datablock // should also be 512 bytes, contains file data, not files.
 {
 	char data[BLOCK_SIZE]; //pure, 512 byte array to store file data in. Nothing else needed?
 };
 
-struct FreeBlockPointer // should be around 256 bytes, so two can fit in one block. 
+typedef struct FreeBlockPointer // should be around 256 bytes, so two can fit in one block. 
 {
 	uint16_t freeBlocks[255];
 	uint16_t nextFreeBlockPointer;
 }; 
+
+typedef struct FS_STATE //used for saving info about the file system 
+{
+	FILE *disk;
+	Superblock sb;
+	Inode inodeList;
+	uint16_t freeBlockList;
+
+};
+
+FS_STATE state; //global FS_STATE object to keep track of file system information
 
 //idea is, upon attach, to fill the file system size up with free blocks. Start with filling the superblock and inode, and then one block with two FreeBlockPointers,
 //pointing to 512 free blocks represented by the Datablock struct. Essentially, one big linked list. 
@@ -54,7 +69,29 @@ struct FreeBlockPointer // should be around 256 bytes, so two can fit in one blo
 //write(fd, &fbn, sizeof(fbn));
 int bvfs_attach(char *fileSystemName) //Alex will work on this. 
 {
-	
+	//make it so only one file system can be created at a time. 
+	if (attached == 1)
+	{
+		return -1;
+	}
+
+	//attempt to create file
+	int bvFD = open(fileSystemName, O_RDWR | O_CREAT | O_EXCL, 0644);	
+	if (bvFD < 0) //file already exists, open it and read data.
+	{
+		if (errno == EEXIST)
+		{
+			
+		}
+		else //something happened. Return error.
+		{	
+			return errno
+		}
+	}
+	else
+	{
+
+	}
 }
 
 int bvfs_detach() //Nicco will work on this.
