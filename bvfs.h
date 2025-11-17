@@ -14,6 +14,7 @@ int MAX_FILE_SIZE = pow(2, 16); // 2^16 bytes
 
 int MAX_NUM_OF_FILES = 512;
 int MAX_NUM_BLOCKS = 16384;
+
 #define BVFS_RDONLY 0;
 #define BVFS_WRCONCAT 1; 
 #define BVFS_WRTRUNC 2;
@@ -24,7 +25,7 @@ struct Superblock //should be, like, 16 bytes and contain the location of the fi
 	uint16_t firstInode;		  //pointer to first Inode
 	uint16_t freeListHead;		  //pointer to first Free Block Pointer
 	int size = BLOCK_SIZE;		  //size of superblock, same as every other block. 
-	int doesExist = 0		  //for future testing, could return whether the file has been created or not. 
+	uint32_t magicNum = 0xT3T0	  //for future testing, could return whether the file has been created or not. 
 };
 
 struct Inode //128 pointers to diskmap blocks, should be 512 bytes Addendum: ONE INODE PER FILE - will end up with a total of 512 inodes. 
