@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <string.h>
 
 //every global in bytes
 int BLOCK_SIZE = 512;
@@ -18,19 +19,18 @@ int MAX_FILE_SIZE = pow(2, 16); // 2^16 bytes
 int MAX_NUM_OF_FILES = 512;
 int MAX_NUM_BLOCKS = 16384;
 int attached = 0; //later, check if file system file is created already
-uint32_t MAGIC_NUMBER = 0xT3T0;
-#define BVFS_RDONLY 0;
-#define BVFS_WRCONCAT 1; 
-#define BVFS_WRTRUNC 2;
+uint32_t MAGIC_NUMBER = 0x43110;
+#define BVFS_RDONLY 0
+#define BVFS_WRCONCAT 1 
+#define BVFS_WRTRUNC 2
 
 typedef struct Superblock //should be, like, 16 bytes and contain the location of the first free block list head
 { //this is probably supposed to be smaller, but it makes more sense to me to actually fill it out with stuff & make it the same size as everything else. 
-	int totalBlocks = MAX_NUM_BLOCKS; //total num of blocks that will be going into the file system
-	int numInodes = MAX_NUM_OF_FILES; //initialize this early, should have 512 inodes since one inode per file.
-	uint16_t firstInode;		  //pointer to first Inode
-	uint16_t freeListHead;		  //pointer to first Free Block Pointer
-	int size = BLOCK_SIZE;		  //size of superblock, same as every other block. 
-	uint32_t magicNum;	  //for future testing, could return whether the file has been created or not. 
+	int totalBlocks; 	//total num of blocks that will be going into the file system
+	int numInodes; 		//initialize this early, should have 512 inodes since one inode per file.
+	uint16_t firstInode;	//pointer to first Inode
+	uint16_t freeListHead;	//pointer to first Free Block Pointer
+	uint32_t magicNum;	//for future testing, could return whether the file has been created or not. 
 };
 
 typedef struct Inode //128 pointers to diskmap blocks, should be 512 bytes Addendum: ONE INODE PER FILE - will end up with a total of 512 inodes. 
@@ -47,7 +47,7 @@ typedef struct Datablock // should also be 512 bytes, contains file data, not fi
 	char data[BLOCK_SIZE]; //pure, 512 byte array to store file data in. Nothing else needed?
 };
 
-typedef struct FreeBlockPointer // should be around 256 bytes, so two can fit in one block. 
+typedef struct FreeBlockPointer // should be around 512 bytes, so it fits in one block. 
 {
 	uint16_t freeBlocks[255];
 	uint16_t nextFreeBlockPointer;
@@ -55,11 +55,11 @@ typedef struct FreeBlockPointer // should be around 256 bytes, so two can fit in
 
 typedef struct FS_STATE //used for saving useful info about the file system 
 {
-	char *name;			//filename
+	char *name; //filename
 	FILE *disk;			
 	Superblock sb;
-	Inode *inodeList;		//list of inodes
-	uint16_t *freeBlockList; 	//list of free blocks.
+	Inode *inodeList; //list of inodes
+	FreeBlockPointer *freeBlockList; //list of free blocks.
 
 };
 
@@ -71,19 +71,20 @@ FS_STATE state; //global FS_STATE object to keep track of file system informatio
 //write(fd, &fbn, sizeof(fbn));
 int bvfs_attach(char *fileSystemName) //Alex will work on this. 
 {
+	char *filename = fileSystemName;
 	//make it so only one file system can be created at a time. 
-	if (attached == 1 && fileSystemName == FS_STATE.name)
+	if (attached == 1 && strcmp(filename, state.name) == 0)
 	{
 		return -1;
 	}
 
 	//attempt to create file
-	int bvFD = open(fileSystemName, O_RDWR | O_CREAT | O_EXCL, 0644);	
+	int bvFD = open(filename, O_RDWR | O_CREAT | O_EXCL, 0644);	
 	if (bvFD < 0) //file already exists, open it and read data.
 	{
 		if (errno == EEXIST) //errno returns that the file exists.
 		{
-			FILE *vfs = fopen(fileSystemName, "rb+"); //open the file in binary to be read from.
+			FILE *vfs = fopen(filename, "rb+"); //open the file in binary to be read from.
 			if (!vfs) //did it open the file?
 			{
 				return -1; //no, it didnt. File couldn't be opened. 
@@ -93,15 +94,16 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 			fseek(vfs, 0, SEEK_SET); //time to get the superblock. 
 			size_t getSuperblock = fread(&state.sb, sizeof(Superblock), 1, vfs); //attempt to read from the superblock. 
 			
-			if (getSuperBlock != 1) //did it find the superblock?
+			if (getSuperblock != 1) //did it find the superblock?
 			{
 				return -1; //no, it didnt.
 			}
 
-			if (state.sb != MAGIC_NUMBER) //Is this the correct file? 	
+			if (state.sb.magicNum != MAGIC_NUMBER) //Is this the correct file? 	
 			{
 				return -1; // it is not.
 			}
+			
 			//now, to fill out the rest of the FS_STATE struct. 
 			//start with inodes.
 			state.inodeList = malloc(sizeof(Inode) * state.sb.numInodes);
@@ -109,12 +111,13 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 			fread(state.inodeList, sizeof(Inode), state.sb.numInodes, vfs);
 			
 			//next, free block list.
-			state.freeBlockList = malloc(state.sb.totalBlocks);
-			fseek(vfs, state.sb.freeListHead, SEEK_SET);
-			fread(state.freeBLockList, 1, state.sb.totalBlocks, vfs);
+			int numFreeBlockPointers = (state.sb.totalBlocks + 255 - 1) / 255;
+			state.freeBlockList = malloc(sizeof(FreeBlockPointer) * numFreeBlockPointers);
+			fseek(vfs, state.sb.freeListHead * BLOCK_SIZE, SEEK_SET);
+			fread(state.freeBlockList, sizeof(FreeBlockPointer), state.sb.totalBlocks, vfs);
 
 			//lastly, the filename because I definitely didnt forget to do it until now.
-			state.name = fileSystemName;
+			state.name = filename;
 		}
 		else //something happened. Return error.
 		{	
@@ -123,7 +126,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 	}
 	else
 	{
-
+		//this is where we create the file if it doesn't already exist.
 	}
 }
 
