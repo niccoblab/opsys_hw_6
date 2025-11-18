@@ -24,8 +24,9 @@ uint32_t MAGIC_NUMBER = 0xT3T0;
 #define BVFS_WRTRUNC 2;
 
 typedef struct Superblock //should be, like, 16 bytes and contain the location of the first free block list head
-{
+{ //this is probably supposed to be smaller, but it makes more sense to me to actually fill it out with stuff & make it the same size as everything else. 
 	int totalBlocks = MAX_NUM_BLOCKS; //total num of blocks that will be going into the file system
+	int numInodes = MAX_NUM_OF_FILES; //initialize this early, should have 512 inodes since one inode per file.
 	uint16_t firstInode;		  //pointer to first Inode
 	uint16_t freeListHead;		  //pointer to first Free Block Pointer
 	int size = BLOCK_SIZE;		  //size of superblock, same as every other block. 
@@ -52,12 +53,13 @@ typedef struct FreeBlockPointer // should be around 256 bytes, so two can fit in
 	uint16_t nextFreeBlockPointer;
 }; 
 
-typedef struct FS_STATE //used for saving info about the file system 
+typedef struct FS_STATE //used for saving useful info about the file system 
 {
-	FILE *disk;
+	char *name;			//filename
+	FILE *disk;			
 	Superblock sb;
-	Inode inodeList;
-	uint16_t freeBlockList;
+	Inode *inodeList;		//list of inodes
+	uint16_t *freeBlockList; 	//list of free blocks.
 
 };
 
@@ -70,7 +72,7 @@ FS_STATE state; //global FS_STATE object to keep track of file system informatio
 int bvfs_attach(char *fileSystemName) //Alex will work on this. 
 {
 	//make it so only one file system can be created at a time. 
-	if (attached == 1)
+	if (attached == 1 && fileSystemName == FS_STATE.name)
 	{
 		return -1;
 	}
@@ -79,13 +81,44 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 	int bvFD = open(fileSystemName, O_RDWR | O_CREAT | O_EXCL, 0644);	
 	if (bvFD < 0) //file already exists, open it and read data.
 	{
-		if (errno == EEXIST)
+		if (errno == EEXIST) //errno returns that the file exists.
 		{
+			FILE *vfs = fopen(fileSystemName, "rb+"); //open the file in binary to be read from.
+			if (!vfs) //did it open the file?
+			{
+				return -1; //no, it didnt. File couldn't be opened. 
+			}
+			state.disk = vfs; //set disk to the file. 
+
+			fseek(vfs, 0, SEEK_SET); //time to get the superblock. 
+			size_t getSuperblock = fread(&state.sb, sizeof(Superblock), 1, vfs); //attempt to read from the superblock. 
 			
+			if (getSuperBlock != 1) //did it find the superblock?
+			{
+				return -1; //no, it didnt.
+			}
+
+			if (state.sb != MAGIC_NUMBER) //Is this the correct file? 	
+			{
+				return -1; // it is not.
+			}
+			//now, to fill out the rest of the FS_STATE struct. 
+			//start with inodes.
+			state.inodeList = malloc(sizeof(Inode) * state.sb.numInodes);
+			fseek(vfs, state.sb.firstInode, SEEK_SET);
+			fread(state.inodeList, sizeof(Inode), state.sb.numInodes, vfs);
+			
+			//next, free block list.
+			state.freeBlockList = malloc(state.sb.totalBlocks);
+			fseek(vfs, state.sb.freeListHead, SEEK_SET);
+			fread(state.freeBLockList, 1, state.sb.totalBlocks, vfs);
+
+			//lastly, the filename because I definitely didnt forget to do it until now.
+			state.name = fileSystemName;
 		}
 		else //something happened. Return error.
 		{	
-			return errno
+			return errno;
 		}
 	}
 	else
