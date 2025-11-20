@@ -26,12 +26,12 @@
 
 typedef struct Superblock //should be, like, 16 bytes and contain the location of the first free block list head
 { //this is probably supposed to be smaller, but it makes more sense to me to actually fill it out with stuff & make it the same size as everything else. 
+	uint32_t magicNum;	 //for future testing, could return whether the file has been created or not. 
 	uint32_t totalBlocks; 	 //total num of blocks that will be going into the file system
 	uint32_t numInodes; 		 //initialize this early, should have 512 inodes since one inode per file.
 	uint16_t firstInode;	 //pointer to first Inode
 	uint16_t freeListHead;	 //pointer to first Free Block Pointer
 	uint16_t firstDatablock; //pointer to the first data block for easy access later. Will, theoretically, never be changed. 
-	uint32_t magicNum;	 //for future testing, could return whether the file has been created or not. 
 } Superblock;
 
 typedef struct Inode //128 pointers to diskmap blocks, should be 512 bytes Addendum: ONE INODE PER FILE - will end up with a total of 512 inodes. 
@@ -328,9 +328,93 @@ int bvfs_detach() //Nicco will work on this.
 
 }
 
-int bvfs_open(char *filename, int mode)
+int bvfs_open(char *filename, int mode) //Alex worked on this.
 {
+	//First, are we attached? If not, error
+	if (!attached) { return -1; }
+	//did the user suply a filename? If not, error. 
+	if (!filename) { return -1; }
 
+	//Next, check if the filename provided is larger than it should be, 32 bytes. If it is, error. 
+	size_t len = strlen(filename) + 1;
+	if (len > FILENAME_SIZE) { return -1; }
+
+	//we have done some preliminary work to ensure smooth looping. Now, to loop through the inodes to look for an already existing file under the same name. 
+	int inodeIndex = -1;
+	for (int i = 0; i < state.sb.numInodes; i++)
+	{
+		if (!state.inodeList[i].isFree && strcmp(state.inodeList[i].fileName, filename) == 0)
+		{
+			inodeIndex = i;
+			break;
+		}
+	}
+	//Cool, we found the inode. Time to actually do an open on the file.
+	if (inodeIndex >= 0) //if the file already exists
+	{
+		Inode *inode = &state.inodeList[inodeIndex];
+		
+		//well, if we're just reading from the file, we dont really need to do anything special, now do we? Just return the address. 
+		if (mode == BVFS_RDONLY) { return inodeIndex; }
+
+		else if (mode == BVFS_WRCONCAT) { return inodeIndex; } //concatenation will be handled by write whenever we decide to code - just return address for now.
+
+		else if (mode == BVFS_WRTRUNC) //now we're cooking with gas. There's some actual stuff we can do here. We can wipe the contents here. 
+		{
+			inode->fileSize = 0;
+			inode->timestamp = time(NULL);
+
+			memset(inode->diskmap, 0xFF, sizeof(inode->diskmap)); //wipe the block map
+			
+			//write the updated inode to the disk. 
+			//wait
+			//wait wait wait
+			//NO YOU CAN'T MAKE ME GO BACK NOOOOOOOOOOOOOOOOOOOO
+			off_t inodeOffset = (off_t)(state.sb.firstInode * BLOCK_SIZE) + (off_t)inodeIndex * sizeof(Inode); //make the offset for the inode
+		       	if (lseek(state.diskFD, inodeOffset, SEEK_SET) < 0) { return -1; } //seek the place to write it at
+			if (write(state.diskFD, inode, sizeof(Inode)) != sizeof(Inode)) { return -1; } //write it
+
+			return inodeIndex;	
+		}
+
+		//No other valid mode exists. Return an error. 
+		return -1; 
+	}
+	//The file doesn't already exist. We can create it... 
+	//...in most cases. BVFS_RDONLY cant actually read from a non existent file, now can it?
+	if (mode == BVFS_RDONLY) { return -1; } //return error if reading from a nonexistent file.
+	
+	int freeInode = -1;
+	for (int i = 0; i < state.sb.numInodes; i++) //loop to find the first free inode. 
+	{
+		if (state.inodeList[i].isFree) //did we find one? Cool! return the address & break from the loop.
+		{	
+			freeInode = i;
+			break;
+		}
+	}
+
+	if (freeInode < 0) { return -1; } //if we never found a free inode, all of them must be full. Return an error.
+	
+	// set up the new inode
+	Inode *newInode = &state.inodeList[freeInode];
+	newInode->isFree = 0;
+	newInode->fileSize = 0;
+	newInode->timestamp = time(NULL);
+	strcpy(newInode->fileName, filename);
+
+	// initialize the disk map. 
+	for (int i = 0; i < 128; i++)
+	{
+		newInode->diskmap[i] = 0xFFFF; //there are no blocks used yet, so fill with placeholder. 
+	}
+
+	//write the inode to disk. 
+	off_t inodeOffset = (off_t)(state.sb.firstInode * BLOCK_SIZE) + (off_t)freeInode * sizeof(Inode); //make the offset for the inode
+	if (lseek(state.diskFD, inodeOffset, SEEK_SET) < 0) { return -1; } //seek the place to write it at
+	if (write(state.diskFD, newInode, sizeof(Inode)) != sizeof(Inode)) { return -1; } //write it
+	
+	return freeInode;
 }
 
 int bvfs_close(int bvfsFD)
