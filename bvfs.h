@@ -348,9 +348,131 @@ int bvfs_detach() //Nicco will work on this.
 
 }
 
-int bvfs_open(char *filename, int mode)
+int bvfs_open(char *filename, int mode) //Alex worked on this.
 {
+	//First, are we attached? If not, error
+	if (!attached) 
+	{ 
+		printf("Error: File system not attached. Please attach a file system first before attempting to run another command.");
+		return -1; 
+	}
+	//did the user suply a filename? If not, error. 
+	if (!filename) 
+	{
+		printf("Error: No file name supplied.");
+		return -1; 
+	}
 
+	//Next, check if the filename provided is larger than it should be, 32 bytes. If it is, error. 
+	size_t len = strlen(filename) + 1;
+	if (len > FILENAME_SIZE) 
+	{ 
+		printf("Error: Supplied filename is bigger than the limit of 32 bytes.");
+		return -1; 
+	}
+
+	//we have done some preliminary work to ensure smooth looping. Now, to loop through the inodes to look for an already existing file under the same name. 
+	int inodeIndex = -1;
+	for (int i = 0; i < state.sb.numInodes; i++)
+	{
+		if (!state.inodeList[i].isFree && strcmp(state.inodeList[i].fileName, filename) == 0)
+		{
+			inodeIndex = i;
+			break;
+		}
+	}
+	//Cool, we found the inode. Time to actually do an open on the file.
+	if (inodeIndex >= 0) //if the file already exists
+	{
+		Inode *inode = &state.inodeList[inodeIndex];
+		
+		//well, if we're just reading from the file, we dont really need to do anything special, now do we? Just return the address. 
+		if (mode == BVFS_RDONLY) { return inodeIndex; }
+
+		else if (mode == BVFS_WRCONCAT) { return inodeIndex; } //concatenation will be handled by write whenever we decide to code - just return address for now.
+
+		else if (mode == BVFS_WRTRUNC) //now we're cooking with gas. There's some actual stuff we can do here. We can wipe the contents here. 
+		{
+			inode->fileSize = 0;
+			inode->timestamp = time(NULL);
+
+			memset(inode->diskmap, 0xFF, sizeof(inode->diskmap)); //wipe the block map
+			
+			//write the updated inode to the disk. 
+			//wait
+			//wait wait wait
+			//NO YOU CAN'T MAKE ME GO BACK NOOOOOOOOOOOOOOOOOOOO
+			off_t inodeOffset = (off_t)(state.sb.firstInode * BLOCK_SIZE) + (off_t)inodeIndex * sizeof(Inode); //make the offset for the inode
+		       	if (lseek(state.diskFD, inodeOffset, SEEK_SET) < 0) 
+			{ 
+
+				printf("Error: Could not find the space to write the inodes.");
+				return -1; 
+			} //seek the place to write it at
+			if (write(state.diskFD, inode, sizeof(Inode)) != sizeof(Inode)) 
+			{ 
+				printf("Error: Could not write the inodes to the disk.");
+				return -1; 
+			} //write it
+
+			return inodeIndex;	
+		}
+
+		//No other valid mode exists. Return an error.
+		printf("Error: Invalid mode given. Valid ones are BVFS_RDONLY, BVFS_WRCONCAT, and BVFS_WRTRUNC.");
+		return -1; 
+	}
+	//The file doesn't already exist. We can create it... 
+	//...in most cases. BVFS_RDONLY cant actually read from a non existent file, now can it?
+	if (mode == BVFS_RDONLY) 
+	{ 
+		printf("Error: Cannot read from a file that doesn't exist.");
+		return -1; 
+	} //return error if reading from a nonexistent file.
+	
+	int freeInode = -1;
+	for (int i = 0; i < state.sb.numInodes; i++) //loop to find the first free inode. 
+	{
+		if (state.inodeList[i].isFree) //did we find one? Cool! return the address & break from the loop.
+		{	
+			freeInode = i;
+			break;
+		}
+	}
+
+	if (freeInode < 0) 
+	{
+		printf("Error: You, somehow, have less free inodes than zero.");
+		return -1; 
+	} //if we never found a free inode, all of them must be full. Return an error.
+	
+	// set up the new inode
+	Inode *newInode = &state.inodeList[freeInode];
+	newInode->isFree = 0;
+	newInode->fileSize = 0;
+	newInode->timestamp = time(NULL);
+	strcpy(newInode->fileName, filename);
+
+	// initialize the disk map. 
+	for (int i = 0; i < 128; i++)
+	{
+		newInode->diskmap[i] = 0xFFFF; //there are no blocks used yet, so fill with placeholder. 
+	}
+
+	//write the inode to disk. 
+	off_t inodeOffset = (off_t)(state.sb.firstInode * BLOCK_SIZE) + (off_t)freeInode * sizeof(Inode); //make the offset for the inode
+	if (lseek(state.diskFD, inodeOffset, SEEK_SET) < 0) 
+	{	
+		printf("Error: Could not find the space on disk for the inodes.");
+		return -1; 
+	} //seek the place to write it at
+	if (write(state.diskFD, newInode, sizeof(Inode)) != sizeof(Inode)) 
+	{ 
+		printf("Error: Could not write the inode to the disk.");
+		return -1; 
+	} //write it
+	
+	return freeInode;
 }
 
 int bvfs_close(int bvfsFD)
