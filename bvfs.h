@@ -70,9 +70,9 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 {
 	char *filename = fileSystemName;
 	//make it so only one file system can be created at a time. 
-	if (attached && state.name && strcmp(filename, state.name) == 0)
+	if (attached == 1 && state.name && strcmp(filename, state.name) == 0)
 	{
-		printf("Error: file system already attached or you have another file system already.\n")
+		printf("Error: file system already attached or you have another file system already.\n");
 		return -1;
 	}
 	
@@ -103,7 +103,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 
 			if (state.sb.magicNum != MAGIC_NUMBER) //Is this the correct file? 	
 			{
-				printf("Error: Magic numbers do not match, not the correct file system. ");
+				printf("Error: Magic numbers do not match, not the correct file system.\n");
 				close(bvFD);
 				return -1; // it is not.
 			}
@@ -114,7 +114,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 			off_t inodeOffset = (off_t)state.sb.firstInode * BLOCK_SIZE; //offset variable to determine where the inodes start. 
 			if (lseek(bvFD, inodeOffset, SEEK_SET) < 0) //...did we find it?
 			{
-				printf("Error: Could not find where the inodes begin.");
+				printf("Error: Could not find where the inodes begin.\n");
 				free(state.inodeList);
 				close(bvFD);
 				return -1;
@@ -122,7 +122,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 			//lets check if we are able to properly read it.
 			if (read(bvFD, state.inodeList, sizeof(Inode) * state.sb.numInodes) != (ssize_t)(sizeof(Inode) * state.sb.numInodes))
 			{
-				printf("Error: Could not read the inode list.");
+				printf("Error: Could not read the inode list.\n");
 				free(state.inodeList);
 				close(bvFD);
 				return -1;
@@ -135,7 +135,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 				uint32_t usedBeforeData = 1 + state.sb.numInodes + numFreeBlockPointers; //superblock + inodes + current count of free block pointers.
 				if (usedBeforeData >= state.sb.totalBlocks) //file system invalid :( 
 				{
-					printf("Error: File System Invalid. More used blocks than total blocks in file system.");
+					printf("Error: File System Invalid. More used blocks than total blocks in file system.\n");
 					free(state.inodeList);
 					close(bvFD);
 					return -1;
@@ -149,7 +149,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 			state.freeBlockList = malloc(sizeof(FreeBlockPointer) * numFreeBlockPointers);
 			if (!state.freeBlockList) 
 			{
-				printf("Error: Malloc for the free block pointer list failed.");
+				printf("Error: Malloc for the free block pointer list failed.\n");
 				free(state.inodeList);
 				close(bvFD);
 				return -1;
@@ -157,7 +157,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 			off_t fbpOffset = (off_t)state.sb.freeListHead * BLOCK_SIZE; //offset variable to determine where the free list stuff starts.
 			if (lseek(bvFD, fbpOffset, SEEK_SET) < 0) //...did we find it?
 			{
-				printf("Error: Could not find the free block list in the system.");
+				printf("Error: Could not find the free block list in the system.\n");
 				free(state.freeBlockList);
 				free(state.inodeList);
 				close(bvFD);
@@ -166,7 +166,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 			//lets check if we were able to read the FBPs
 			if (read(bvFD, state.freeBlockList, sizeof(FreeBlockPointer) * numFreeBlockPointers) != (ssize_t)(sizeof(FreeBlockPointer) * numFreeBlockPointers))
 			{
-				printf("Error: Could not read the free block pointers from the disk.");
+				printf("Error: Could not read the free block pointers from the disk.\n");
 				free(state.freeBlockList);
 				free(state.inodeList);
 				close(bvFD);
@@ -176,6 +176,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 			//lastly, the filename because I definitely didnt forget to do it until now.
 			state.name = filename;
 			attached = 1;
+			printf("attached: %d\n", attached);
 			return 0;
 		}
 		else //something happened. Return error.
@@ -203,13 +204,13 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 	//find Superblock position & write it into the file. 
 	if (lseek(bvFD, 0, SEEK_SET) < 0) //can we find the place to put it? no? 
 	{
-		printf("Error: Could not find superblock position, which is weird because its always at 0.");
+		printf("Error: Could not find superblock position, which is weird because its always at 0.\n");
 		close(bvFD);
 		return -1;
 	}
 	if (write(bvFD, &state.sb, sizeof(Superblock)) != (ssize_t)sizeof(Superblock)) //can we properly write to the file?
 	{
-		printf("Error: Could not write the superblock to the disk.");
+		printf("Error: Could not write the superblock to the disk.\n");
 		close(bvFD);
 		return -1;
 	}
@@ -218,7 +219,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 	state.inodeList = calloc(state.sb.numInodes, sizeof(Inode)); //make space for the inode list and fill with zeros with calloc because i dont want to fill it in the loop
 	if (!state.inodeList) //did
 	{		      //did we do it
-		printf("Error: Could not make space for the inode list.");
+		printf("Error: Could not make space for the inode list.\n");
 		close(bvFD);  //did we do the thing
 		return -1;    //did we create the space for the inode list
 	}		      //i hope so. can you tell im trying to entertain myself as I write the same comments over and over?
@@ -232,7 +233,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 	off_t inodeOffset = (off_t)state.sb.firstInode * BLOCK_SIZE; //make offset to write the inode list after the superblock.
 	if (lseek(bvFD, inodeOffset, SEEK_SET) < 0) //did we find place to put inode list 
 	{
-		printf("Error: Could not find where to place the inode list.");
+		printf("Error: Could not find where to place the inode list.\n");
 		free(state.inodeList); //no? erase all progress so far and crush my dreams
 		close(bvFD);
 		return -1;
@@ -240,7 +241,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 
         if (write(bvFD, state.inodeList, sizeof(Inode) * state.sb.numInodes) != (ssize_t)(sizeof(Inode) * state.sb.numInodes)) 
 	{				//write time :)
-		printf("Error: Could not write the inode list to the disk.");
+		printf("Error: Could not write the inode list to the disk.\n");
 		free(state.inodeList);	  //how much?
 		close(bvFD);		//secret :3
 		return -1;		  //why?
@@ -257,7 +258,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 		uint32_t usedBeforeData = 1 + inodeBlocks + numFreeBlockPointers; //superblock + inodes + current count of free block pointers.
 		if (usedBeforeData >= state.sb.totalBlocks) //file system invalid :( 
 		{
-			printf("Error: More used data than total blocks in the system. How did you manage this?");
+			printf("Error: More used data than total blocks in the system. How did you manage this?\n");
 			free(state.inodeList);
 			close(bvFD);
 			return -1;
@@ -275,7 +276,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 	state.freeBlockList = calloc(numFreeBlockPointers, sizeof(FreeBlockPointer)); //make space for the free block list.
 	if (!state.freeBlockList)
 	{
-		printf("Error: Could not make space for the free block list.");
+		printf("Error: Could not make space for the free block list.\n");
 		free(state.inodeList);
 		close(bvFD);
 		return -1;
@@ -309,7 +310,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 
 	if (lseek(bvFD, state.sb.freeListHead * BLOCK_SIZE, SEEK_SET) < 0) //try to find the place for the free list head location
 	{
-		printf("Error: Could not find the place on disk to write the free block lists.");
+		printf("Error: Could not find the place on disk to write the free block lists.\n");
 		free(state.freeBlockList); //do you ever feel like bashing your head into a brick wall?
 		free(state.inodeList);	   //thats what writing these repetitive checks do to me.
 		close(bvFD);
@@ -317,9 +318,9 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 	}
 	if (write(bvFD, state.freeBlockList, sizeof(FreeBlockPointer) * numFreeBlockPointers) != (ssize_t)(sizeof(FreeBlockPointer) * numFreeBlockPointers))
 	{				 	//Try to write the free block lists. some slam poetry for you:
-		printf("Error: Could not write the free block list to disk.");
+		printf("Error: Could not write the free block list to disk.\n");
 		free(state.freeBlockList); 	//do. you ever feel. like a plastic bag.
-		free(state.inodeList);	   	//drifing. through the wind.
+		free(state.inodeList);	   	//drifting. through the wind.
 		close(bvFD);			//wanting to start again. 
 		return -1;			//do you. ever feel. like a. house of cards.
 	}					//one blow. from caving in.
@@ -330,7 +331,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 	off_t fsSize = (off_t)state.sb.totalBlocks * BLOCK_SIZE;
 	if (ftruncate(bvFD, fsSize) < 0) //try to fill the rest of the file with null bytes and cut off any excess data.
 	{				 
-		printf("Error: Could not fill the file system with overwritable data.");
+		printf("Error: Could not fill the file system with overwritable data.\n");
 		free(state.freeBlockList); //im going to be seeing this in my dreams for the next month.
 		free(state.inodeList);	   //or are they nightmares? i dont know anymore.
 		close(bvFD);
@@ -338,28 +339,104 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 	}
 
 	attached = 1;
+	printf("attached: %d\n", attached);
 	return 0;
 	//w-what? i-i'm done??? i... i can't believe it... i'm free...
 	//oh theres more to code. at the time of writing this, the other seven functions need to be completed. oh god.
 }
 
-int bvfs_detach() //Nicco will work on this.
+int bvfs_detach() //Alex will work on this.
 {
+	if (attached == 0) //is there a file system attached?
+	{
+		printf("Error: No file system attached. Please attach a file system before attempting to detach it.\n");
+		return -1;
+	}
+	if (lseek(state.diskFD, 0, SEEK_SET) < 0) //try to find superblocks location on disk 
+	{ 
+		printf("Error: Could not find the superblock's location.\n"); 
+		return -1; 
+	}
+	ssize_t getSuperblock = write(state.diskFD, &state.sb, sizeof(Superblock)); //attempt to write the superblock to disk. 
+	
+	if (getSuperblock != sizeof(Superblock)) //did it save the superblock?
+	{
+		printf("Error: Could not write the superblock. to disk.\n");
+		return -1; //no, it didnt
+	}
+	
+	//Next to write to disk, inodes
+	off_t inodeOffset = (off_t)state.sb.firstInode * BLOCK_SIZE; //offset variable to determine where the inodes start. 
+	if (lseek(state.diskFD, inodeOffset, SEEK_SET) < 0) //...did we find it?
+	{
+		printf("Error: Could not find where the inodes begin.\n");
+		return -1;
+	}
+	//lets check if we are able to properly read it.
+	if (write(state.diskFD, state.inodeList, sizeof(Inode) * state.sb.numInodes) != (ssize_t)(sizeof(Inode) * state.sb.numInodes))
+	{
+		printf("Error: Could not write the inode list to disk.\n");
+		return -1;
+	}
+	//end of inode stuff
+	//next, free block list. First, we gotta find out how many free block pointers there are. 
+	int numFreeBlockPointers = 1;
+       	while (1)
+	{
+		uint32_t usedBeforeData = 1 + state.sb.numInodes + numFreeBlockPointers; //superblock + inodes + current count of free block pointers.
+		uint32_t dataBlocks = state.sb.totalBlocks - usedBeforeData;
+		uint32_t neededFBP = (dataBlocks + 255 - 1) / 255;
+		if (neededFBP == (uint32_t)numFreeBlockPointers) break;
+		numFreeBlockPointers = neededFBP;
+	}		
+	
+	off_t fbpOffset = (off_t)state.sb.freeListHead * BLOCK_SIZE; //offset variable to determine where the free list stuff starts.
+	if (lseek(state.diskFD, fbpOffset, SEEK_SET) < 0) //...did we find it?
+	{
+		printf("Error: Could not find the free block list in the system.\n");
+		return -1;
+	}
+	//lets check if we were able to write the FBPs to disk
+	if (write(state.diskFD, state.freeBlockList, sizeof(FreeBlockPointer) * numFreeBlockPointers) != (ssize_t)(sizeof(FreeBlockPointer) * numFreeBlockPointers))
+	{
+		printf("Error: Could not write the free block pointers to disk.\n");
+		return -1;
+	}
+	
+	//OK, onto stuff that isnt recycled code from attach. We need to reset the state, so it can be filled when attaching. 
+	//close the file
+	close(state.diskFD);
 
+	//free memory used
+	free(state.inodeList);
+       	free(state.freeBlockList);
+
+	//reset the state.
+	state.name = NULL;
+	state.diskFD = -1;
+	state.inodeList = NULL;
+	state.freeBlockList = NULL;
+	memset(&state.sb, 0, sizeof(Superblock));
+
+	//mark as detached.
+	attached = 0;
+	printf("attached: %d\n", attached);
+	return 0;
 }
+
 
 int bvfs_open(char *filename, int mode) //Alex worked on this.
 {
 	//First, are we attached? If not, error
-	if (!attached) 
+	if (attached == 0) 
 	{ 
-		printf("Error: File system not attached. Please attach a file system first before attempting to run another command.");
+		printf("Error: File system not attached. Please attach a file system first before attempting to run another command.\n");
 		return -1; 
 	}
 	//did the user suply a filename? If not, error. 
 	if (!filename) 
 	{
-		printf("Error: No file name supplied.");
+		printf("Error: No file name supplied.\n");
 		return -1; 
 	}
 
@@ -367,7 +444,7 @@ int bvfs_open(char *filename, int mode) //Alex worked on this.
 	size_t len = strlen(filename) + 1;
 	if (len > FILENAME_SIZE) 
 	{ 
-		printf("Error: Supplied filename is bigger than the limit of 32 bytes.");
+		printf("Error: Supplied filename is bigger than the limit of 32 bytes.\n");
 		return -1; 
 	}
 
@@ -406,12 +483,12 @@ int bvfs_open(char *filename, int mode) //Alex worked on this.
 		       	if (lseek(state.diskFD, inodeOffset, SEEK_SET) < 0) 
 			{ 
 
-				printf("Error: Could not find the space to write the inodes.");
+				printf("Error: Could not find the space to write the inodes.\n");
 				return -1; 
 			} //seek the place to write it at
 			if (write(state.diskFD, inode, sizeof(Inode)) != sizeof(Inode)) 
 			{ 
-				printf("Error: Could not write the inodes to the disk.");
+				printf("Error: Could not write the inodes to the disk.\n");
 				return -1; 
 			} //write it
 
@@ -419,14 +496,14 @@ int bvfs_open(char *filename, int mode) //Alex worked on this.
 		}
 
 		//No other valid mode exists. Return an error.
-		printf("Error: Invalid mode given. Valid ones are BVFS_RDONLY, BVFS_WRCONCAT, and BVFS_WRTRUNC.");
+		printf("Error: Invalid mode given. Valid ones are BVFS_RDONLY, BVFS_WRCONCAT, and BVFS_WRTRUNC.\n");
 		return -1; 
 	}
 	//The file doesn't already exist. We can create it... 
 	//...in most cases. BVFS_RDONLY cant actually read from a non existent file, now can it?
 	if (mode == BVFS_RDONLY) 
 	{ 
-		printf("Error: Cannot read from a file that doesn't exist.");
+		printf("Error: Cannot read from a file that doesn't exist.\n");
 		return -1; 
 	} //return error if reading from a nonexistent file.
 	
@@ -442,7 +519,7 @@ int bvfs_open(char *filename, int mode) //Alex worked on this.
 
 	if (freeInode < 0) 
 	{
-		printf("Error: You, somehow, have less free inodes than zero.");
+		printf("Error: You, somehow, have less free inodes than zero.\n");
 		return -1; 
 	} //if we never found a free inode, all of them must be full. Return an error.
 	
@@ -463,19 +540,19 @@ int bvfs_open(char *filename, int mode) //Alex worked on this.
 	off_t inodeOffset = (off_t)(state.sb.firstInode * BLOCK_SIZE) + (off_t)freeInode * sizeof(Inode); //make the offset for the inode
 	if (lseek(state.diskFD, inodeOffset, SEEK_SET) < 0) 
 	{	
-		printf("Error: Could not find the space on disk for the inodes.");
+		printf("Error: Could not find the space on disk for the inodes.\n");
 		return -1; 
 	} //seek the place to write it at
 	if (write(state.diskFD, newInode, sizeof(Inode)) != sizeof(Inode)) 
 	{ 
-		printf("Error: Could not write the inode to the disk.");
+		printf("Error: Could not write the inode to the disk.\n");
 		return -1; 
 	} //write it
 	
 	return freeInode;
 }
 
-int bvfs_close(int bvfsFD)
+int bvfs_close(int bvfsFD) //Alex will work on this.
 {
 
 }
