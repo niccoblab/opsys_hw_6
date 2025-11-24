@@ -35,13 +35,30 @@ int main(int argc, char* argv[])
     	printf("[OK] testfile.txt not opened.\n\n");
 		
 	printf("[TEST] Opening a file in WRTRUNC so it actually is created...\n");
-	if(bvfs_open("testfile.txt", BVFS_WRTRUNC) < 0)
+	int testfile = bvfs_open("testfile.txt", BVFS_WRTRUNC);
+	if(testfile < 0)
 	{
-		printf("ERROR: Error somewhere \n");
+		printf("ERROR: Error somewhere. \n");
 		return 1;
 	}
 	printf("[OK] testfile.txt opened \n\n");
 	
+	printf("[TEST] Closing said file...\n");
+	if(bvfs_close(testfile) < 0)
+	{
+		printf("ERROR: Error somewhere.\n");
+		return 1;
+	}
+	printf("[OK] testfile.txt closed. \n\n");
+	
+	printf("[TEST] Closing said file again (should return error)...\n");
+	if(bvfs_close(testfile) != 0)
+	{
+		printf("ERROR: Should be returning -1.\n");
+		return 1;
+	}
+	printf("[OK] nothing out of the ordinary happened when attempting to close the testfile.txt again.\n\n");
+
 	printf("[TEST] Attempting to detach the file system...\n");
 	if(bvfs_detach() < 0)
 	{

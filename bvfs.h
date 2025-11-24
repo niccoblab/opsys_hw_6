@@ -176,7 +176,6 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 			//lastly, the filename because I definitely didnt forget to do it until now.
 			state.name = filename;
 			attached = 1;
-			printf("attached: %d\n", attached);
 			return 0;
 		}
 		else //something happened. Return error.
@@ -339,7 +338,6 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 	}
 
 	attached = 1;
-	printf("attached: %d\n", attached);
 	return 0;
 	//w-what? i-i'm done??? i... i can't believe it... i'm free...
 	//oh theres more to code. at the time of writing this, the other seven functions need to be completed. oh god.
@@ -420,7 +418,6 @@ int bvfs_detach() //Alex will work on this.
 
 	//mark as detached.
 	attached = 0;
-	printf("attached: %d\n", attached);
 	return 0;
 }
 
@@ -554,7 +551,41 @@ int bvfs_open(char *filename, int mode) //Alex worked on this.
 
 int bvfs_close(int bvfsFD) //Alex will work on this.
 {
+	//so, this doesn't really close anything. Close, in this case, will simply write the file to disk at that 
+	if (attached == 0) //is a file system attached?
+	{
+		printf("Error: There is no file system attach. Please make sure a file is attached before calling any commands.\n");
+		return -1;
+	}	
 
+	if (bvfsFD < 0 || bvfsFD >= (int)state.sb.numInodes) //were we given an invalid file descriptor?
+	{
+		printf("Error: Invalid file descriptor.\n");
+		return -1;
+	}
+
+	Inode *inode = &state.inodeList[bvfsFD]; //make the required inode.
+	if (inode->isFree == 1) //check if, for some reason, the inode is free.
+	{
+		printf("Error: Node %d is not in use.\n", bvfsFD);
+		return -1;
+	}
+
+	inode->timestamp = time(NULL); //update the timestamp, since I count close as an edit to the file.
+	
+	//lets write the inode to disk.
+	off_t inodeOffset = (off_t)(state.sb.firstInode * BLOCK_SIZE) + (off_t)bvfsFD * sizeof(Inode); //make the offset for the inode
+	if (lseek(state.diskFD, inodeOffset, SEEK_SET) < 0) 
+	{	
+		printf("Error: Could not find the space on disk for the inode.\n");
+		return -1; 
+	} //seek the place to write it at
+	if (write(state.diskFD, inode, sizeof(Inode)) != sizeof(Inode)) 
+	{ 
+		printf("Error: Could not write the inode to the disk.\n");
+		return -1; 
+	} //write it
+	return 0;
 }
 
 int bvfs_read(int bvfsFD, char *buffer, size_t numBytes)
