@@ -52,7 +52,7 @@ int main(int argc, char* argv[])
 	printf("[OK] testfile.txt closed. \n\n");
 	
 	printf("[TEST] Closing said file again (should return error)...\n");
-	if(bvfs_close(testfile) != 0)
+	if(bvfs_close(testfile) != -1)
 	{
 		printf("ERROR: Should be returning -1.\n");
 		return 1;

@@ -38,9 +38,10 @@ typedef struct Inode //128 pointers to diskmap blocks, should be 512 bytes Adden
 {
 	uint16_t diskmap[128];  	//If need to go over multiple blocks, this diskmap is to keep the file intact. 
 	char fileName[FILENAME_SIZE]; 	//should be stored here, not in data block
-	uint32_t fileSize;	   		//self explanatory
+	uint32_t fileSize;	   	//self explanatory
 	time_t timestamp; 		//timestamp of creation / last edit
-	uint8_t isFree;			//if the inode contains a file or not. 0 is false.i
+	uint8_t isFree;			//if the inode contains a file or not. 0 is false.
+	uint8_t isOpen; 		//is the inode open?
 } Inode;
 
 typedef struct FreeBlockPointer // should be around 512 bytes, so it fits in one block. 
@@ -227,6 +228,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 		state.inodeList[i].isFree = 1;
 		state.inodeList[i].fileSize = 0;
 		state.inodeList[i].timestamp = 0;
+		state.inodeList[i].isOpen = 0;
 	}
 
 	off_t inodeOffset = (off_t)state.sb.firstInode * BLOCK_SIZE; //make offset to write the inode list after the superblock.
@@ -459,7 +461,7 @@ int bvfs_open(char *filename, int mode) //Alex worked on this.
 	if (inodeIndex >= 0) //if the file already exists
 	{
 		Inode *inode = &state.inodeList[inodeIndex];
-		
+		inode->isOpen = 1;
 		//well, if we're just reading from the file, we dont really need to do anything special, now do we? Just return the address. 
 		if (mode == BVFS_RDONLY) { return inodeIndex; }
 
@@ -525,6 +527,7 @@ int bvfs_open(char *filename, int mode) //Alex worked on this.
 	newInode->isFree = 0;
 	newInode->fileSize = 0;
 	newInode->timestamp = time(NULL);
+	newInode->isOpen = 1;
 	strcpy(newInode->fileName, filename);
 
 	// initialize the disk map. 
@@ -570,9 +573,15 @@ int bvfs_close(int bvfsFD) //Alex will work on this.
 		printf("Error: Node %d is not in use.\n", bvfsFD);
 		return -1;
 	}
+	if (inode->isOpen == 0)
+	{
+		printf("Error: Node %d is not open.\n", bvfsFD);
+		return -1;
+	}
 
 	inode->timestamp = time(NULL); //update the timestamp, since I count close as an edit to the file.
-	
+	inode->isOpen = 0; //flip the flag to close the file.
+
 	//lets write the inode to disk.
 	off_t inodeOffset = (off_t)(state.sb.firstInode * BLOCK_SIZE) + (off_t)bvfsFD * sizeof(Inode); //make the offset for the inode
 	if (lseek(state.diskFD, inodeOffset, SEEK_SET) < 0) 
