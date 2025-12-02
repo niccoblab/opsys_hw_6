@@ -28,9 +28,9 @@ typedef struct Superblock //should be, like, 16 bytes and contain the location o
 { //this is probably supposed to be smaller, but it makes more sense to me to actually fill it out with stuff & make it the same size as everything else. 
 	uint32_t magicNum;	 //for future testing, could return whether the file has been created or not. 
 	uint32_t totalBlocks; 	 //total num of blocks that will be going into the file system
-	uint32_t numInodes; 		 //initialize this early, should have 512 inodes since one inode per file.
+	uint32_t numInodes;      //initialize this early, should have 512 inodes since one inode per file.
 	uint16_t firstInode;	 //pointer to first Inode
-	uint16_t freeListHead;	 //pointer to first Free Block Pointer, not changed because FreeBlockPointer is a struct.
+	uint16_t freeListHead;	 //pointer to first Free Block Pointer
 	uint16_t firstDatablock; //pointer to the first data block for easy access later. Will, theoretically, never be changed. 
 } Superblock;
 
@@ -42,6 +42,8 @@ typedef struct Inode //128 pointers to diskmap blocks, should be 512 bytes Adden
 	time_t timestamp; 		//timestamp of creation / last edit
 	uint8_t isFree;			//if the inode contains a file or not. 0 is false.
 	uint8_t isOpen; 		//is the inode open?
+    uint8_t openMode;       //the mode that the file was opened in
+    uint16_t cursor;        //the offset into the file
 } Inode;
 
 typedef struct FreeBlockPointer // should be around 512 bytes, so it fits in one block. 
@@ -56,6 +58,7 @@ typedef struct FS_STATE //used for saving useful info about the file system
 	int diskFD;			
 	Superblock sb;
 	Inode *inodeList; //list of inodes
+
 } FS_STATE;
 
 static FS_STATE state = {0}; //global FS_STATE object to keep track of file system information
@@ -64,10 +67,35 @@ static int attached = 0;
 //idea is, upon attach, to fill the file system size up with free blocks. Start with filling the superblock and inode, and then one block with two FreeBlockPointers,
 //pointing to 512 free blocks represented by the Datablock struct. Essentially, one big linked list. 
 
+//this function gives us a free block to write to, this is useful for the write function
+//this is a dumb ass comment this shit is self explanatory
+uint16_t getFreeBlock(){
+    curr = state.sb.freeListHead
+   
+    uint16_t returnID = -1;
+
+    for (int i=0;i<255;i++){
+        if (curr.freeBlocks[i] != -1){
+            returnID = curr.freeBlocks[i];
+            //once we find a free block (denoted by it not being -1), we can return that out and set that position to be -1
+            curr.freeBlocks[i] = -1;
+            if (i==255){
+                //if the free block we're returning is the last in the list, we have exhausted all the free blocks and need to update the freeblocklist
+                //we can avoid temp variables since we already have a curr, we can do basically head = curr->next and then delete curr
+                state.sb.freeListHead = curr->nextFreeBlockPointer;
+            }
+        }
+    }
+    return returnID;
+}
+
 //write(fd, &fbn, sizeof(fbn));
 int bvfs_attach(char *fileSystemName) //Alex will work on this. 
 {
 	char *filename = fileSystemName;
+	//make it so only one file system can be created at a time. 
+	if (attached == 1 && state.name && strcmp(filename, state.name) == 0)
+	{
 	//make it so only one file system can be created at a time. 
 	if (attached == 1 && state.name && strcmp(filename, state.name) == 0)
 	{
@@ -110,7 +138,6 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 			//now, to fill out the rest of the FS_STATE struct. 
 			//start with inodes.
 			state.inodeList = malloc(sizeof(Inode) * state.sb.numInodes);
-			uint32_t inodeBlocks = (uint32_t)((sizeof(Inode) * state.sb.numInodes + BLOCK_SIZE - 1) / BLOCK_SIZE);
 			off_t inodeOffset = (off_t)state.sb.firstInode * BLOCK_SIZE; //offset variable to determine where the inodes start. 
 			if (lseek(bvFD, inodeOffset, SEEK_SET) < 0) //...did we find it?
 			{
@@ -132,7 +159,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 			int numFreeBlockPointers = 1;
        			while (1)
 			{
-				uint32_t usedBeforeData = 1 + inodeBlocks + (uint32_t)numFreeBlockPointers; //superblock + inodes + current count of free block pointers.
+				uint32_t usedBeforeData = 1 + state.sb.numInodes + numFreeBlockPointers; //superblock + inodes + current count of free block pointers.
 				if (usedBeforeData >= state.sb.totalBlocks) //file system invalid :( 
 				{
 					printf("Error: File System Invalid. More used blocks than total blocks in file system.\n");
@@ -146,20 +173,29 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 				numFreeBlockPointers = neededFBP;
 			}	
 			//cool! now we actually make the list.
-			off_t fbpOffset = (off_t)state.sb.freeListHead * BLOCK_SIZE; //offset variable to determine where the free list stuff starts.
-			FreeBlockPointer head;
-			if (lseek(bvFD, fbpOffset, SEEK_SET) < 0) //...did we find it?
+			state.freeBlockList = malloc(sizeof(FreeBlockPointer) * numFreeBlockPointers);
+			if (!state.freeBlockList) 
 			{
-				printf("Error: Could not find the free block list in the system.\n");
+				printf("Error: Malloc for the free block pointer list failed.\n");
 				free(state.inodeList);
 				close(bvFD);
 				return -1;
 			}
-			
-			if (read(bvFD, &head, sizeof(FreeBlockPointer)) != (ssize_t)(sizeof(FreeBlockPointer)))
+			off_t fbpOffset = (off_t)state.sb.freeListHead * BLOCK_SIZE; //offset variable to determine where the free list stuff starts.
+			if (lseek(bvFD, fbpOffset, SEEK_SET) < 0) //...did we find it?
 			{
-				printf("Error: Could not read the free block list's head from disk.\n");
-			 	free(state.inodeList);
+				printf("Error: Could not find the free block list in the system.\n");
+				free(state.freeBlockList);
+				free(state.inodeList);
+				close(bvFD);
+				return -1;
+			}
+			//lets check if we were able to read the FBPs
+			if (read(bvFD, state.freeBlockList, sizeof(FreeBlockPointer) * numFreeBlockPointers) != (ssize_t)(sizeof(FreeBlockPointer) * numFreeBlockPointers))
+			{
+				printf("Error: Could not read the free block pointers from the disk.\n");
+				free(state.freeBlockList);
+				free(state.inodeList);
 				close(bvFD);
 				return -1;
 			}
@@ -246,7 +282,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 	int numFreeBlockPointers = 1;	
 	while (1) //listen its almost the exact same code as the one above soooooooo
 	{
-		uint32_t usedBeforeData = 1 + inodeBlocks + (uint32_t)numFreeBlockPointers; //superblock + inodes + current count of free block pointers.
+		uint32_t usedBeforeData = 1 + inodeBlocks + numFreeBlockPointers; //superblock + inodes + current count of free block pointers.
 		if (usedBeforeData >= state.sb.totalBlocks) //file system invalid :( 
 		{
 			printf("Error: More used data than total blocks in the system. How did you manage this?\n");
@@ -261,71 +297,60 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 	}	
 	
 	//store the first data block and fill the free pointer list in memory
+	state.sb.freeListHead = (uint16_t)(state.sb.firstInode + inodeBlocks);
 	state.sb.firstDatablock = (uint16_t)(state.sb.freeListHead + numFreeBlockPointers);
-	//rewrite superblock since we just added to it.
-	if (lseek(bvFD, 0, SEEK_SET) < 0)
-    	{
-        	printf("Error: Could not seek to superblock to rewrite it.\n");
-        	free(state.inodeList);
-        	close(bvFD);
-        	return -1;
-    	}
-    	if (write(bvFD, &state.sb, sizeof(Superblock)) != (ssize_t)sizeof(Superblock))
-    	{
-        	printf("Error: Could not rewrite superblock.\n");
-        	free(state.inodeList);
-        	close(bvFD);
-        	return -1;
-    	}
+
+	state.freeBlockList = calloc(numFreeBlockPointers, sizeof(FreeBlockPointer)); //make space for the free block list.
+	if (!state.freeBlockList)
+	{
+		printf("Error: Could not make space for the free block list.\n");
+		free(state.inodeList);
+		close(bvFD);
+		return -1;
+	}
+	
 	//begin hell. and by hell, i mean linked list creation. 
 	uint32_t blockIndex = state.sb.firstDatablock;
 	for (int i = 0; i < numFreeBlockPointers; i++) //outer for loop to create all free block pointers potentially needed. 
 	{
-		FreeBlockPointer fbp;
+		FreeBlockPointer *fbp = &state.freeBlockList[i];
 		for (int j = 0; j < 255; j++) //inner for loop meant to loop through the free blocks in order to put them in the FreeBlockPointer! Wow!
 		{
 			if (blockIndex < state.sb.totalBlocks) 
 			{
-				fbp.freeBlocks[j] = (uint16_t)blockIndex++;
+				fbp->freeBlocks[j] = (uint16_t)blockIndex++;
 			}
 			else
 			{
-				fbp.freeBlocks[j] = 0xFFFF; //in case there is no free block here 
+				fbp->freeBlocks[j] = 0xFFFF; //in case there is no free block here 
 			}
 		}
 		if (i == numFreeBlockPointers - 1) //is this the last free block pointer?
 		{
-			fbp.nextFreeBlockPointer = 0xFFFF; //set the next to nothing
+			fbp->nextFreeBlockPointer = 0xFFFF; //set the next to nothing
 		}
 		else
 		{
-			fbp.nextFreeBlockPointer = (uint16_t)(state.sb.freeListHead + i + 1); //set the next free block pointer to the next one! Woah!
+			fbp->nextFreeBlockPointer = (uint16_t)(state.sb.freeListHead + i + 1); //set the next free block pointer to the next one! Woah!
 		}
-
-		off_t blockOffset = (off_t)(state.sb.freeListHead + i) * BLOCK_SIZE;
-		if (lseek(bvFD, blockOffset, SEEK_SET) < 0)
-        	{
-            		printf("Error: Could not seek to free block pointer #%d.\n", i);
-            		free(state.inodeList);
-            		close(bvFD);
-            		return -1;
-        	}
-        	if (write(bvFD, &fbp, sizeof(FreeBlockPointer)) != (ssize_t)sizeof(FreeBlockPointer))
-        	{
-            		printf("Error: Could not write free block pointer #%d to disk.\n", i);
-            		free(state.inodeList);
-            		close(bvFD);
-        		return -1;
-        	}
 	}
 
-	//below is the remnants of a different age and a different mindset.
-	//Try to write the free block lists. some slam poetry for you:
-	//do. you ever feel. like a plastic bag.
-	//drifting. through the wind.
-	//wanting to start again. 
-	//do you. ever feel. like a. house of cards.
-	//one blow. from caving in.
+	if (lseek(bvFD, state.sb.freeListHead * BLOCK_SIZE, SEEK_SET) < 0) //try to find the place for the free list head location
+	{
+		printf("Error: Could not find the place on disk to write the free block lists.\n");
+		free(state.freeBlockList); //do you ever feel like bashing your head into a brick wall?
+		free(state.inodeList);	   //thats what writing these repetitive checks do to me.
+		close(bvFD);
+		return -1;
+	}
+	if (write(bvFD, state.freeBlockList, sizeof(FreeBlockPointer) * numFreeBlockPointers) != (ssize_t)(sizeof(FreeBlockPointer) * numFreeBlockPointers))
+	{				 	//Try to write the free block lists. some slam poetry for you:
+		printf("Error: Could not write the free block list to disk.\n");
+		free(state.freeBlockList); 	//do. you ever feel. like a plastic bag.
+		free(state.inodeList);	   	//drifting. through the wind.
+		close(bvFD);			//wanting to start again. 
+		return -1;			//do you. ever feel. like a. house of cards.
+	}					//one blow. from caving in.
 	
 	//a-are we done? Can I go to sleep now?
 	//oh wait. we need to fill the file system with stuff. 
@@ -334,6 +359,7 @@ int bvfs_attach(char *fileSystemName) //Alex will work on this.
 	if (ftruncate(bvFD, fsSize) < 0) //try to fill the rest of the file with null bytes and cut off any excess data.
 	{				 
 		printf("Error: Could not fill the file system with overwritable data.\n");
+		free(state.freeBlockList); //im going to be seeing this in my dreams for the next month.
 		free(state.inodeList);	   //or are they nightmares? i dont know anymore.
 		close(bvFD);
 		return -1;
@@ -380,7 +406,7 @@ int bvfs_detach() //Alex will work on this.
 	}
 	//end of inode stuff
 	//next, free block list. First, we gotta find out how many free block pointers there are. 
-	/*int numFreeBlockPointers = 1; potentially dont need anything from this line until end of the block comment. 
+	int numFreeBlockPointers = 1;
        	while (1)
 	{
 		uint32_t usedBeforeData = 1 + state.sb.numInodes + numFreeBlockPointers; //superblock + inodes + current count of free block pointers.
@@ -397,11 +423,11 @@ int bvfs_detach() //Alex will work on this.
 		return -1;
 	}
 	//lets check if we were able to write the FBPs to disk
-	if (write(state.diskFD, , sizeof(FreeBlockPointer) * numFreeBlockPointers) != (ssize_t)(sizeof(FreeBlockPointer) * numFreeBlockPointers))
+	if (write(state.diskFD, state.freeBlockList, sizeof(FreeBlockPointer) * numFreeBlockPointers) != (ssize_t)(sizeof(FreeBlockPointer) * numFreeBlockPointers))
 	{
 		printf("Error: Could not write the free block pointers to disk.\n");
 		return -1;
-	}*/
+	}
 	
 	//OK, onto stuff that isnt recycled code from attach. We need to reset the state, so it can be filled when attaching. 
 	//close the file
@@ -409,11 +435,13 @@ int bvfs_detach() //Alex will work on this.
 
 	//free memory used
 	free(state.inodeList);
+       	free(state.freeBlockList);
 
 	//reset the state.
 	state.name = NULL;
 	state.diskFD = -1;
 	state.inodeList = NULL;
+	state.freeBlockList = NULL;
 	memset(&state.sb, 0, sizeof(Superblock));
 
 	//mark as detached.
@@ -461,14 +489,23 @@ int bvfs_open(char *filename, int mode) //Alex worked on this.
 		Inode *inode = &state.inodeList[inodeIndex];
 		inode->isOpen = 1;
 		//well, if we're just reading from the file, we dont really need to do anything special, now do we? Just return the address. 
-		if (mode == BVFS_RDONLY) { return inodeIndex; }
+		if (mode == BVFS_RDONLY) 
+		{
+            		inode->openMode = BVFS_RDONLY;
+            		return inodeIndex;
+        	}
 
-		else if (mode == BVFS_WRCONCAT) { return inodeIndex; } //concatenation will be handled by write whenever we decide to code - just return address for now.
+		else if (mode == BVFS_WRCONCAT) 
+		{
+            		inode->openMode = BVFS_WRCONCAT;
+            		return inodeIndex;
+        	} //concatenation will be handled by write whenever we decide to code - just return address for now.
 
 		else if (mode == BVFS_WRTRUNC) //now we're cooking with gas. There's some actual stuff we can do here. We can wipe the contents here. 
 		{
 			inode->fileSize = 0;
 			inode->timestamp = time(NULL);
+            		inode->openMode = BVFS_WRTRUNC;
 
 			memset(inode->diskmap, 0xFF, sizeof(inode->diskmap)); //wipe the block map
 			
@@ -488,7 +525,7 @@ int bvfs_open(char *filename, int mode) //Alex worked on this.
 				printf("Error: Could not write the inodes to the disk.\n");
 				return -1; 
 			} //write it
-
+            
 			return inodeIndex;	
 		}
 
@@ -526,6 +563,7 @@ int bvfs_open(char *filename, int mode) //Alex worked on this.
 	newInode->fileSize = 0;
 	newInode->timestamp = time(NULL);
 	newInode->isOpen = 1;
+	newInode->openMode = mode;
 	strcpy(newInode->fileName, filename);
 
 	// initialize the disk map. 
@@ -546,8 +584,6 @@ int bvfs_open(char *filename, int mode) //Alex worked on this.
 		printf("Error: Could not write the inode to the disk.\n");
 		return -1; 
 	} //write it
-	
-	return freeInode;
 }
 
 int bvfs_close(int bvfsFD) //Alex will work on this.
@@ -597,12 +633,140 @@ int bvfs_close(int bvfsFD) //Alex will work on this.
 
 int bvfs_read(int bvfsFD, char *buffer, size_t numBytes)
 {
-
+	Inode *inode = &state.inodeList[bvfsFD];
+    int bytesRead = 0;
+    int diskMapID = (numBytes/512)+1;
 }
 
-int bvfs_write(int bvfdFD, char *buffer, size_t numBytes)
-{
+ssize_t bvfs_write(int bvfsFD, char *buffer, size_t numBytes) {
+    
+	Inode *inode = &state.inodeList[bvfsFD];
+    
+    if (!inode->isOpen || inode->openMode == BVFS_RDONLY) {
+        // not open or opened in read-only mode
+        return -1;
+    }
 
+    size_t bytesWritten = 0;
+
+    while (bytesWritten < numBytes) {
+        // Determine current block and offset within block
+        uint32_t cursor = inode->cursor;
+        uint32_t blockIndex = cursor / BLOCK_SIZE;
+        uint32_t blockOffset = cursor % BLOCK_SIZE;
+
+        // If block not allocated yet, fetch from free list
+        if (inode->diskmap[blockIndex] == 0) {
+            uint16_t newBlock = getFreeBlock();
+            if (newBlock == -1){
+                return -1; // no free blocks :(
+            }
+            inode->diskmap[blockIndex] = newBlock;
+        }
+
+        uint16_t blockID = inode->diskmap[blockIndex];
+        size_t spaceInBlock = BLOCK_SIZE - blockOffset;
+        size_t bytesToWrite = (count - bytesWritten < spaceInBlock) ?
+                              (count - bytesWritten) : spaceInBlock;
+
+        // Seek to correct block position
+        off_t offset = (off_t)blockID * BLOCK_SIZE + blockOffset;
+        if (lseek(state.diskFD, offset, SEEK_SET) == (off_t)-1) {
+            return -1;
+        }
+
+        // Write chunk
+        ssize_t w = write(state.diskFD, buffer + bytesWritten, bytesToWrite);
+        if (w < 0) {
+            perror("write");
+            return -1;
+        }
+
+        // Advance counters
+        bytesWritten += w;
+        inode->cursor += w;
+        if (inode->cursor > inode->fileSize) {
+            inode->fileSize = inode->cursor;
+        }
+    }
+
+    inode->timestamp = time(NULL); // update modification time
+    return bytesWritten;
+}
+
+ssize_t bvfs_write(int bvfsFD, const char *buffer, size_t numBytes) {
+    Inode *inode = &state.inodeList[bvfsFD];
+
+    if (!inode->isOpen || inode->openMode == BVFS_RDONLY) {
+        return -1; // invalid mode
+    }
+
+    size_t bytesWritten = 0;
+    size_t pos = inode->fileSize; // start writing at end of file (append semantics)
+
+    while (bytesWritten < numBytes) {
+        // Compute block index and offset dynamically
+        size_t cursor = pos;
+        size_t blockIndex = cursor / BLOCK_SIZE;
+        size_t blockOffset = cursor % BLOCK_SIZE;
+
+        // Allocate block if missing
+        if (inode->diskmap[blockIndex] == 0) {
+            uint16_t newBlock = getFreeBlock();
+            if (newBlock == 0) {
+                return -1; // no free blocks
+            }
+            inode->diskmap[blockIndex] = newBlock;
+        }
+
+        uint16_t blockID = inode->diskmap[blockIndex];
+        size_t spaceInBlock = BLOCK_SIZE - blockOffset;
+        size_t bytesToWrite = (numBytes - bytesWritten < spaceInBlock)
+                                ? (numBytes - bytesWritten)
+                                : spaceInBlock;
+
+        // Seek to correct block position
+        off_t offset = (off_t)blockID * BLOCK_SIZE + blockOffset;
+        if (lseek(state.diskFD, offset, SEEK_SET) == (off_t)-1) {
+            perror("lseek");
+            return -1;
+        }
+
+        // Write chunk
+        ssize_t w = write(state.diskFD, buffer + bytesWritten, bytesToWrite);
+        if (w < 0) {
+            perror("write");
+            return -1;
+        }
+
+        // Advance counters
+        bytesWritten += w;
+        pos += w;
+    }
+
+    // Update file size dynamically
+    if (pos > inode->fileSize) {
+        inode->fileSize = pos;
+    }
+
+    inode->timestamp = time(NULL); // update modification time
+    return bytesWritten;
+}
+
+int bvfs_write(int bvfsFD, char *buffer, size_t numBytes)
+{
+    Inode *node = &state.inodeList[bvfsFD]; //the iNode we're looking at
+    int bytesWritten = 0;
+    int diskMapID = (numBytes/512)+1;
+
+    uint16_t pointer = state.sb.freeListHead;
+    FreeBlockPointer *memory = state.freeBlockList[pointer];
+
+    while (bytesWritten <= strlen(buffer) && bytesWritten <= numBytes){ //while the number of bytes written is less than bufferSize, or numBytes
+        
+    }
+
+    return node.fileSize=numBytes; //return the number of bytes written, also this is an example of a slick backman one liner
 }
 
 int bvfs_unlink(char *filename)
